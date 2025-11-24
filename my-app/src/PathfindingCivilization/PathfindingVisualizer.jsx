@@ -5,6 +5,7 @@ import DropdownList from "react-widgets/DropdownList";
 import Node from "./Node/Node";
 import { dijkstra, getNodesInShortestPathOrder } from "../algorithms/dijkstra";
 import { aStar } from "../algorithms/aStar";
+import { generateMazeWalls } from "../algorithms/maze";
 import "./PathfindingVisualizer.css";
 import "react-widgets/styles.css";
 import "./DropdownList.scss";
@@ -55,6 +56,8 @@ export default class PathfindingVisualizer extends Component {
       rowsInput: DEFAULT_ROWS.toString(),
       colsInput: DEFAULT_COLS.toString(),
       mouseIsPressed: false,
+      draggingStart: false,
+      draggingFinish: false,
       buttonDisabled: false,
       selectedAlgorithm: null,
       isDropdownOpen: false,
@@ -230,6 +233,22 @@ export default class PathfindingVisualizer extends Component {
   };
 
   handleMouseDown(row, col) {
+    const node = this.state.grid[row][col];
+
+    // Begin dragging start or finish if clicked on them
+    if (node.isStart) {
+      // Clear path when moving endpoints
+      this.clearGrid(false, this.state.selectedAlgorithm);
+      this.setState({ draggingStart: true, mouseIsPressed: true });
+      return;
+    }
+    if (node.isFinish) {
+      this.clearGrid(false, this.state.selectedAlgorithm);
+      this.setState({ draggingFinish: true, mouseIsPressed: true });
+      return;
+    }
+
+    // Otherwise toggle wall
     const newGrid = getNewGridWithWallToggled(this.state.grid, row, col);
     this.setState({ grid: newGrid, mouseIsPressed: true });
     this.playWallSound();
@@ -237,13 +256,66 @@ export default class PathfindingVisualizer extends Component {
 
   handleMouseEnter(row, col) {
     if (!this.state.mouseIsPressed) return;
+
+    const { draggingStart, draggingFinish } = this.state;
+    if (draggingStart) {
+      this.moveStartTo(row, col);
+      return;
+    }
+    if (draggingFinish) {
+      this.moveFinishTo(row, col);
+      return;
+    }
+
     const newGrid = getNewGridWithWallToggled(this.state.grid, row, col);
     this.setState({ grid: newGrid });
     this.playWallSound();
   }
 
   handleMouseUp() {
-    this.setState({ mouseIsPressed: false });
+    this.setState({
+      mouseIsPressed: false,
+      draggingStart: false,
+      draggingFinish: false,
+    });
+  }
+
+  moveStartTo(row, col) {
+    this.setState((prev) => {
+      const grid = prev.grid.map((r) => r.slice());
+      const current = findCurrentPositions(grid);
+      const target = grid[row][col];
+      if (target.isFinish) return null; // don't overlap endpoints
+
+      // clear previous start
+      if (current.start)
+        grid[current.start.row][current.start.col] = {
+          ...grid[current.start.row][current.start.col],
+          isStart: false,
+        };
+
+      // ensure target isn't a wall
+      grid[row][col] = { ...target, isStart: true, isWall: false };
+      return { grid };
+    });
+  }
+
+  moveFinishTo(row, col) {
+    this.setState((prev) => {
+      const grid = prev.grid.map((r) => r.slice());
+      const current = findCurrentPositions(grid);
+      const target = grid[row][col];
+      if (target.isStart) return null;
+
+      if (current.finish)
+        grid[current.finish.row][current.finish.col] = {
+          ...grid[current.finish.row][current.finish.col],
+          isFinish: false,
+        };
+
+      grid[row][col] = { ...target, isFinish: true, isWall: false };
+      return { grid };
+    });
   }
 
   animateAlgorithm(visitedNodesInOrder, nodesInShortestPathOrder) {
@@ -300,7 +372,7 @@ export default class PathfindingVisualizer extends Component {
   }
 
   visualize(algorithm) {
-    const { selectedAlgorithm, grid, rows, cols } = this.state;
+    const { selectedAlgorithm, grid } = this.state;
 
     if (!selectedAlgorithm) {
       const descriptionElement = document.getElementById("algo-description");
@@ -326,10 +398,10 @@ export default class PathfindingVisualizer extends Component {
     this.playStartSound();
     this.playClickSound();
 
-    const startPos = getStartNodePosition(rows, cols);
-    const finishPos = getFinishNodePosition(rows, cols);
-    const startNode = grid[startPos.row][startPos.col];
-    const finishNode = grid[finishPos.row][finishPos.col];
+    const { start, finish } = findCurrentPositions(grid);
+    if (!start || !finish) return;
+    const startNode = grid[start.row][start.col];
+    const finishNode = grid[finish.row][finish.col];
     let visitedNodesInOrder;
 
     switch (algorithm) {
@@ -433,21 +505,21 @@ export default class PathfindingVisualizer extends Component {
     }));
   };
 
-  generateRandomMaze = () => {
-    const { grid } = this.state;
-    const newGrid = grid.map((row) =>
-      row.map((node) => {
-        // Ensure the start and finish nodes are not walls
-        if (node.isStart || node.isFinish) {
-          return node;
-        }
-        // Randomly decide if this node should be a wall
-        const isWall = Math.random() < 0.2; // 20% chance for each node to be a wall
-        return {
-          ...node,
-          isWall: isWall,
-        };
-      })
+  generateMaze = () => {
+    const { grid, rows, cols } = this.state;
+    // Clear current path before generating a new maze
+    this.clearGrid(false, this.state.selectedAlgorithm);
+    const { start, finish } = findCurrentPositions(grid);
+
+    // Create walls matrix and map back into grid nodes
+    const wallsMatrix = generateMazeWalls(rows, cols, start, finish);
+
+    const newGrid = grid.map((r, ri) =>
+      r.map((node, ci) => ({
+        ...node,
+        // Ensure start/finish remain open
+        isWall: node.isStart || node.isFinish ? false : !!wallsMatrix[ri][ci],
+      }))
     );
 
     this.setState({ grid: newGrid });
@@ -673,7 +745,7 @@ export default class PathfindingVisualizer extends Component {
           </button>
           <button
             onClick={() => {
-              this.generateRandomMaze();
+              this.generateMaze();
               this.playClickSound();
             }}
             style={{
@@ -681,7 +753,7 @@ export default class PathfindingVisualizer extends Component {
             }}
             disabled={this.state.buttonDisabled}
           >
-            Random Walls
+            Generate Maze
           </button>
           {/* toggle music on/off */}
           <button
@@ -781,16 +853,12 @@ export default class PathfindingVisualizer extends Component {
                         isStart={isStart}
                         isWall={isWall}
                         mouseIsPressed={mouseIsPressed}
-                        onMouseDown={(row, col) => {
-                          if (!isStart && !isFinish) {
-                            this.handleMouseDown(row, col);
-                          }
-                        }}
-                        onMouseEnter={(row, col) => {
-                          if (!isStart && !isFinish) {
-                            this.handleMouseEnter(row, col);
-                          }
-                        }}
+                        onMouseDown={(row, col) =>
+                          this.handleMouseDown(row, col)
+                        }
+                        onMouseEnter={(row, col) =>
+                          this.handleMouseEnter(row, col)
+                        }
                         onMouseUp={() => this.handleMouseUp()}
                         row={row}
                         selectedAlgorithm={this.state.selectedAlgorithm}
@@ -846,10 +914,27 @@ const createNode = (row, col, startPos, finishPos) => {
 const getNewGridWithWallToggled = (grid, row, col) => {
   const newGrid = grid.slice();
   const node = newGrid[row][col];
+  if (node.isStart || node.isFinish) return newGrid; // don't toggle endpoints
   const newNode = {
     ...node,
     isWall: !node.isWall,
   };
   newGrid[row][col] = newNode;
   return newGrid;
+};
+
+// Utility to locate current start and finish nodes each time (supports dragging updates)
+const findCurrentPositions = (grid) => {
+  let start = null;
+  let finish = null;
+  for (let r = 0; r < grid.length; r++) {
+    for (let c = 0; c < grid[r].length; c++) {
+      const n = grid[r][c];
+      if (n.isStart) start = { row: r, col: c };
+      if (n.isFinish) finish = { row: r, col: c };
+      if (start && finish) break;
+    }
+    if (start && finish) break;
+  }
+  return { start, finish };
 };
