@@ -5,11 +5,12 @@ import DropdownList from "react-widgets/DropdownList";
 import Node from "./Node/Node";
 import { dijkstra, getNodesInShortestPathOrder } from "../algorithms/dijkstra";
 import { aStar } from "../algorithms/aStar";
+import { generateMazeWalls } from "../algorithms/maze";
 import "./PathfindingVisualizer.css";
 import "react-widgets/styles.css";
 import "./DropdownList.scss";
-import DijkstraImage from '../assets/ChickenDijkstra.png';
-import AStarImage from '../assets/BeefAStar.png';
+import DijkstraImage from "../assets/ChickenDijkstra.png";
+import AStarImage from "../assets/BeefAStar.png";
 import BgMusic from "../assets/sounds/Sweden.mp3";
 import MusicOnIcon from "../assets/musicon.png";
 import MusicOffIcon from "../assets/musicoff.png";
@@ -30,18 +31,33 @@ import FinishSound from "../assets/sounds/XP_Old.oga";
 
 // when adding algos, just search 'algos' for requirements
 
-const START_NODE_ROW = 10;
-const START_NODE_COL = 15;
-const FINISH_NODE_ROW = 10;
-const FINISH_NODE_COL = 35;
+const DEFAULT_ROWS = 20;
+const DEFAULT_COLS = 50;
 const algorithms = ["Dijkstra", "A*"]; // add options if adding algos
+
+// Helper function to calculate start and finish positions based on grid size
+const getStartNodePosition = (rows, cols) => ({
+  row: Math.floor(rows / 2),
+  col: Math.floor(cols * 0.3),
+});
+
+const getFinishNodePosition = (rows, cols) => ({
+  row: Math.floor(rows / 2),
+  col: Math.floor(cols * 0.7),
+});
 
 export default class PathfindingVisualizer extends Component {
   constructor(props) {
     super(props);
     this.state = {
       grid: [],
+      rows: DEFAULT_ROWS,
+      cols: DEFAULT_COLS,
+      rowsInput: DEFAULT_ROWS.toString(),
+      colsInput: DEFAULT_COLS.toString(),
       mouseIsPressed: false,
+      draggingStart: false,
+      draggingFinish: false,
       buttonDisabled: false,
       selectedAlgorithm: null,
       isDropdownOpen: false,
@@ -52,13 +68,13 @@ export default class PathfindingVisualizer extends Component {
   }
 
   componentDidMount() {
-    const grid = getInitialGrid();
+    const grid = getInitialGrid(this.state.rows, this.state.cols);
     this.setState({ grid });
   }
 
   clearGrid(alsoWall, selectedAlgorithm) {
     const { grid } = this.state;
-  
+
     const newGrid = grid.map((row) =>
       row.map((node) => {
         const baseNode = {
@@ -70,17 +86,17 @@ export default class PathfindingVisualizer extends Component {
           heuristic: 0,
           fCost: Infinity,
         };
-  
+
         if (!alsoWall && node.isWall) {
           baseNode.isWall = true;
         }
-  
+
         return node.isStart || node.isFinish ? baseNode : baseNode;
       })
     );
-  
+
     this.setState({ grid: newGrid, selectedAlgorithm }); // Ensure selectedAlgorithm persists
-  
+
     newGrid.forEach((row, rowIndex) => {
       row.forEach((node, colIndex) => {
         const nodeElement = document.getElementById(
@@ -101,17 +117,21 @@ export default class PathfindingVisualizer extends Component {
             : node.isWall
             ? "node-wall"
             : "";
-  
+
           // Apply the class names based on node type and selected algorithm
           if (alsoWall) {
             nodeElement.className = `node ${
-              node.isStart ? "node-start" : node.isFinish ? `node-finish ${
-                selectedAlgorithm === "Dijkstra"
-                  ? "node-dijkstra-finish"
-                  : selectedAlgorithm === "A*"
-                  ? "node-astar-finish"
-                  : ""
-              }` : ""
+              node.isStart
+                ? "node-start"
+                : node.isFinish
+                ? `node-finish ${
+                    selectedAlgorithm === "Dijkstra"
+                      ? "node-dijkstra-finish"
+                      : selectedAlgorithm === "A*"
+                      ? "node-astar-finish"
+                      : ""
+                  }`
+                : ""
             }`.trim();
           } else {
             nodeElement.className = `node ${extraClassName}`.trim();
@@ -132,7 +152,7 @@ export default class PathfindingVisualizer extends Component {
   playWallSound = () => {
     const wallSound1 = new Howl({ src: [PlaceWallSound1], volume: 0.2 });
     const wallSound2 = new Howl({ src: [PlaceWallSound2], volume: 0.2 });
-    const wallSound3 = new Howl({ src: [PlaceWallSound3], volume: 0.2});
+    const wallSound3 = new Howl({ src: [PlaceWallSound3], volume: 0.2 });
     const wallSound4 = new Howl({ src: [PlaceWallSound4], volume: 0.2 });
     const wallSound5 = new Howl({ src: [PlaceWallSound5], volume: 0.2 });
 
@@ -156,6 +176,9 @@ export default class PathfindingVisualizer extends Component {
       case 5:
         wallSound5.play();
         break;
+      default:
+        wallSound1.play();
+        break;
     }
   };
 
@@ -166,7 +189,7 @@ export default class PathfindingVisualizer extends Component {
 
   playStartSound = () => {
     const startsound1 = new Howl({ src: [StartSound1], volume: 0.3 });
-    const startsound2 = new Howl({ src: [StartSound2], volume: 0.3  });
+    const startsound2 = new Howl({ src: [StartSound2], volume: 0.3 });
 
     let num = Math.floor(Math.random() * (2 - 1 + 1)) + 1;
 
@@ -177,6 +200,9 @@ export default class PathfindingVisualizer extends Component {
       case 2:
         startsound2.play();
         break;
+      default:
+        startsound1.play();
+        break;
     }
   };
 
@@ -186,7 +212,10 @@ export default class PathfindingVisualizer extends Component {
   };
 
   playCloseDropdownSound = () => {
-    const closedropdownsound = new Howl({ src: [CloseDropdownSound], volume: 0.2 });
+    const closedropdownsound = new Howl({
+      src: [CloseDropdownSound],
+      volume: 0.2,
+    });
     closedropdownsound.play();
   };
 
@@ -204,6 +233,22 @@ export default class PathfindingVisualizer extends Component {
   };
 
   handleMouseDown(row, col) {
+    const node = this.state.grid[row][col];
+
+    // Begin dragging start or finish if clicked on them
+    if (node.isStart) {
+      // Clear path when moving endpoints
+      this.clearGrid(false, this.state.selectedAlgorithm);
+      this.setState({ draggingStart: true, mouseIsPressed: true });
+      return;
+    }
+    if (node.isFinish) {
+      this.clearGrid(false, this.state.selectedAlgorithm);
+      this.setState({ draggingFinish: true, mouseIsPressed: true });
+      return;
+    }
+
+    // Otherwise toggle wall
     const newGrid = getNewGridWithWallToggled(this.state.grid, row, col);
     this.setState({ grid: newGrid, mouseIsPressed: true });
     this.playWallSound();
@@ -211,13 +256,66 @@ export default class PathfindingVisualizer extends Component {
 
   handleMouseEnter(row, col) {
     if (!this.state.mouseIsPressed) return;
+
+    const { draggingStart, draggingFinish } = this.state;
+    if (draggingStart) {
+      this.moveStartTo(row, col);
+      return;
+    }
+    if (draggingFinish) {
+      this.moveFinishTo(row, col);
+      return;
+    }
+
     const newGrid = getNewGridWithWallToggled(this.state.grid, row, col);
     this.setState({ grid: newGrid });
     this.playWallSound();
   }
 
   handleMouseUp() {
-    this.setState({ mouseIsPressed: false });
+    this.setState({
+      mouseIsPressed: false,
+      draggingStart: false,
+      draggingFinish: false,
+    });
+  }
+
+  moveStartTo(row, col) {
+    this.setState((prev) => {
+      const grid = prev.grid.map((r) => r.slice());
+      const current = findCurrentPositions(grid);
+      const target = grid[row][col];
+      if (target.isFinish) return null; // don't overlap endpoints
+
+      // clear previous start
+      if (current.start)
+        grid[current.start.row][current.start.col] = {
+          ...grid[current.start.row][current.start.col],
+          isStart: false,
+        };
+
+      // ensure target isn't a wall
+      grid[row][col] = { ...target, isStart: true, isWall: false };
+      return { grid };
+    });
+  }
+
+  moveFinishTo(row, col) {
+    this.setState((prev) => {
+      const grid = prev.grid.map((r) => r.slice());
+      const current = findCurrentPositions(grid);
+      const target = grid[row][col];
+      if (target.isStart) return null;
+
+      if (current.finish)
+        grid[current.finish.row][current.finish.col] = {
+          ...grid[current.finish.row][current.finish.col],
+          isFinish: false,
+        };
+
+      grid[row][col] = { ...target, isFinish: true, isWall: false };
+      return { grid };
+    });
   }
 
   animateAlgorithm(visitedNodesInOrder, nodesInShortestPathOrder) {
@@ -226,7 +324,7 @@ export default class PathfindingVisualizer extends Component {
     if (startNode) {
       startNode.classList.add("node-active-steve");
     }
-  
+
     for (let i = 0; i <= visitedNodesInOrder.length; i++) {
       if (i === visitedNodesInOrder.length) {
         setTimeout(() => {
@@ -242,25 +340,26 @@ export default class PathfindingVisualizer extends Component {
       this.setState({ isAlgoRunning: false });
     }
   }
-  
 
   animateShortestPath(nodesInShortestPathOrder) {
     for (let i = 0; i < nodesInShortestPathOrder.length; i++) {
       setTimeout(() => {
         this.playShortestFoundSound1();
-  
+
         // Get the current node
         const node = nodesInShortestPathOrder[i];
-        const nodeElement = document.getElementById(`node-${node.row}-${node.col}`);
-  
+        const nodeElement = document.getElementById(
+          `node-${node.row}-${node.col}`
+        );
+
         // Add 'node-active-steve' class to show the character
         nodeElement.classList.add("node-active-steve");
-  
+
         // If this is not the last node, remove 'node-active-steve' after 0.1 seconds
         if (i < nodesInShortestPathOrder.length - 1) {
           setTimeout(() => {
             nodeElement.classList.remove("node-active-steve");
-  
+
             // Add 'node-shortest-path' class to mark the path
             nodeElement.className = "node node-shortest-path";
           }, 100); // 0.1 seconds
@@ -271,11 +370,9 @@ export default class PathfindingVisualizer extends Component {
       }, 75 * i); // Delay each step by 75ms
     }
   }
-  
-  
 
   visualize(algorithm) {
-    const { selectedAlgorithm } = this.state;
+    const { selectedAlgorithm, grid } = this.state;
 
     if (!selectedAlgorithm) {
       const descriptionElement = document.getElementById("algo-description");
@@ -292,14 +389,19 @@ export default class PathfindingVisualizer extends Component {
     // start timer for algo
     const algorithmStartTime = Date.now();
 
-    this.setState({ buttonDisabled: true, algorithmTimer: null, animationTimer: null });
+    this.setState({
+      buttonDisabled: true,
+      algorithmTimer: null,
+      animationTimer: null,
+    });
     this.clearGrid(false, this.state.selectedAlgorithm);
     this.playStartSound();
     this.playClickSound();
 
-    const { grid } = this.state;
-    const startNode = grid[START_NODE_ROW][START_NODE_COL];
-    const finishNode = grid[FINISH_NODE_ROW][FINISH_NODE_COL];
+    const { start, finish } = findCurrentPositions(grid);
+    if (!start || !finish) return;
+    const startNode = grid[start.row][start.col];
+    const finishNode = grid[finish.row][finish.col];
     let visitedNodesInOrder;
 
     switch (algorithm) {
@@ -319,7 +421,7 @@ export default class PathfindingVisualizer extends Component {
     const algorithmEndTime = Date.now();
     const algorithmDuration = algorithmEndTime - algorithmStartTime;
     this.setState({ algorithmTimer: algorithmDuration });
-    
+
     this.animateAlgorithm(visitedNodesInOrder, nodesInShortestPathOrder);
 
     // start timer for animation
@@ -353,7 +455,8 @@ export default class PathfindingVisualizer extends Component {
           <div>
             <h1 class="sign">Dijkstra's Algorithm</h1>
             <p class="sign">
-              Dijkstra's algorithm finds the shortest paths between nodes in a weighted graph.
+              Dijkstra's algorithm finds the shortest paths between nodes in a
+              weighted graph.
             </p>
           </div>
         );
@@ -402,24 +505,75 @@ export default class PathfindingVisualizer extends Component {
     }));
   };
 
-  generateRandomMaze = () => {
-    const { grid } = this.state;
-    const newGrid = grid.map((row) =>
-      row.map((node) => {
-        // Ensure the start and finish nodes are not walls
-        if (node.isStart || node.isFinish) {
-          return node;
-        }
-        // Randomly decide if this node should be a wall
-        const isWall = Math.random() < 0.2; // 20% chance for each node to be a wall
-        return {
-          ...node,
-          isWall: isWall,
-        };
-      })
+  generateMaze = () => {
+    const { grid, rows, cols } = this.state;
+    // Clear current path before generating a new maze
+    this.clearGrid(false, this.state.selectedAlgorithm);
+    const { start, finish } = findCurrentPositions(grid);
+
+    // Create walls matrix and map back into grid nodes
+    const wallsMatrix = generateMazeWalls(rows, cols, start, finish);
+
+    const newGrid = grid.map((r, ri) =>
+      r.map((node, ci) => ({
+        ...node,
+        // Ensure start/finish remain open
+        isWall: node.isStart || node.isFinish ? false : !!wallsMatrix[ri][ci],
+      }))
     );
 
     this.setState({ grid: newGrid });
+  };
+
+  updateGridSize = (newRows, newCols) => {
+    if (newRows < 5 || newRows > 50 || newCols < 10 || newCols > 100) {
+      alert("Grid size must be between 5-50 rows and 10-100 columns");
+      return false;
+    }
+
+    const newGrid = getInitialGrid(newRows, newCols);
+    this.setState({
+      grid: newGrid,
+      rows: newRows,
+      cols: newCols,
+    });
+    return true;
+  };
+
+  handleRowsChange = (event) => {
+    // Just update the input value in state, don't validate yet
+    const value = event.target.value;
+    this.setState({ rowsInput: value });
+  };
+
+  handleColsChange = (event) => {
+    // Just update the input value in state, don't validate yet
+    const value = event.target.value;
+    this.setState({ colsInput: value });
+  };
+
+  handleRowsBlur = (event) => {
+    const value = event.target.value;
+    const newRows = parseInt(value);
+
+    if (isNaN(newRows) || !this.updateGridSize(newRows, this.state.cols)) {
+      // Reset to current valid value if invalid
+      this.setState({ rowsInput: this.state.rows.toString() });
+    } else {
+      this.setState({ rowsInput: newRows.toString() });
+    }
+  };
+
+  handleColsBlur = (event) => {
+    const value = event.target.value;
+    const newCols = parseInt(value);
+
+    if (isNaN(newCols) || !this.updateGridSize(this.state.rows, newCols)) {
+      // Reset to current valid value if invalid
+      this.setState({ colsInput: this.state.cols.toString() });
+    } else {
+      this.setState({ colsInput: newCols.toString() });
+    }
   };
 
   // add here for more algos
@@ -430,67 +584,90 @@ export default class PathfindingVisualizer extends Component {
           <>
             <div class="info">
               <div class="content">
-                <h1 class="algo-title">A* Algorithm <img src={AStarImage} class="algo-title"></img></h1>
+                <h1 class="algo-title">
+                  A* Algorithm{" "}
+                  <img
+                    src={AStarImage}
+                    alt="A* Algorithm Character"
+                    class="algo-title"
+                  ></img>
+                </h1>
                 <p class="info">
-                  A* is a popular pathfinding algorithm widely used in games and mapping applications
-                  due to its efficiency. It combines the actual cost to reach a node (gScore) with an estimated
-                  cost to the goal (heuristic) to prioritize exploration. The heuristic is a smart guess,
-                  such as the straight-line distance or the number of steps to the target, helping the algorithm
-                  focus on the most promising paths. Using a priority queue to track nodes and iteratively updating
-                  costs, A* explores nodes with the lowest total estimated cost (fScore) until it finds the shortest
-                  path or determines no path exists.
+                  A* is a popular pathfinding algorithm widely used in games and
+                  mapping applications due to its efficiency. It combines the
+                  actual cost to reach a node (gScore) with an estimated cost to
+                  the goal (heuristic) to prioritize exploration. The heuristic
+                  is a smart guess, such as the straight-line distance or the
+                  number of steps to the target, helping the algorithm focus on
+                  the most promising paths. Using a priority queue to track
+                  nodes and iteratively updating costs, A* explores nodes with
+                  the lowest total estimated cost (fScore) until it finds the
+                  shortest path or determines no path exists.
                 </p>
               </div>
             </div>
             <div class="info">
               <div class="content">
                 <h1 class="algo-title">How it works:</h1>
-                <iframe class="ytvid"
-                src="https://www.youtube.com/embed/71CEj4gKDnE?si=SnfHqElTbotlOaWw"
-                title="Youtube"
-                allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-                allowFullScreen>
-                </iframe>
+                <iframe
+                  class="ytvid"
+                  src="https://www.youtube.com/embed/71CEj4gKDnE?si=SnfHqElTbotlOaWw"
+                  title="Youtube"
+                  allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                  allowFullScreen
+                ></iframe>
               </div>
-          </div>
-        </>
+            </div>
+          </>
         );
       case "Dijkstra":
         return (
           <>
             <div class="info">
               <div class="content">
-                <h1 class="algo-title">Dijkstra Algorithm <img src={DijkstraImage} class="algo-title"></img></h1>
+                <h1 class="algo-title">
+                  Dijkstra Algorithm{" "}
+                  <img
+                    src={DijkstraImage}
+                    alt="Dijkstra Algorithm Character"
+                    class="algo-title"
+                  ></img>
+                </h1>
                 <p class="info">
-                  Dijkstra’s algorithm, developed by Edsger W. Dijkstra in 1956, is a widely-used method for finding
-                  the shortest path from a single source vertex to other vertices in a graph with non-negative edge weights.
-                  It works by maintaining two sets of vertices: visited and unvisited. Starting from the source vertex,
-                  it iteratively selects the unvisited vertex with the smallest tentative distance, updates the distances
-                  of its neighbors if shorter paths are found, and repeats this until the target vertex is reached or all
-                  reachable vertices are processed. In directed graphs, it follows edge directions, while in undirected graphs,
-                  edges can be traversed in both directions.
+                  Dijkstra’s algorithm, developed by Edsger W. Dijkstra in 1956,
+                  is a widely-used method for finding the shortest path from a
+                  single source vertex to other vertices in a graph with
+                  non-negative edge weights. It works by maintaining two sets of
+                  vertices: visited and unvisited. Starting from the source
+                  vertex, it iteratively selects the unvisited vertex with the
+                  smallest tentative distance, updates the distances of its
+                  neighbors if shorter paths are found, and repeats this until
+                  the target vertex is reached or all reachable vertices are
+                  processed. In directed graphs, it follows edge directions,
+                  while in undirected graphs, edges can be traversed in both
+                  directions.
                 </p>
-                
               </div>
             </div>
             <div class="info">
               <div class="content">
                 <h1 class="algo-title">How it works:</h1>
-                <iframe class="ytvid"
+                <iframe
+                  class="ytvid"
                   src="https://www.youtube.com/embed/EFg3u_E6eHU"
                   title="How Dijkstra Algorithm Works - Spanning Tree"
                   allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
                   allowFullScreen
                 ></iframe>
               </div>
-          </div>
-        </>
+            </div>
+          </>
         );
       default:
         return (
-        <div class="default-info">
-          <h1 class="algo-title">Please choose an algorithm first.</h1>
-        </div>
+          <div class="default-info">
+            <h1 class="algo-title">Please choose an algorithm first.</h1>
+          </div>
         );
     }
   };
@@ -502,6 +679,8 @@ export default class PathfindingVisualizer extends Component {
       selectedAlgorithm,
       isDropdownOpen,
       isMusicPlaying,
+      rows,
+      cols,
     } = this.state;
 
     return (
@@ -566,7 +745,7 @@ export default class PathfindingVisualizer extends Component {
           </button>
           <button
             onClick={() => {
-              this.generateRandomMaze();
+              this.generateMaze();
               this.playClickSound();
             }}
             style={{
@@ -574,7 +753,7 @@ export default class PathfindingVisualizer extends Component {
             }}
             disabled={this.state.buttonDisabled}
           >
-            Random Walls
+            Generate Maze
           </button>
           {/* toggle music on/off */}
           <button
@@ -590,6 +769,36 @@ export default class PathfindingVisualizer extends Component {
             />
           </button>
         </div>
+
+        {/* Grid size controls */}
+        <div id="grid-size-controls">
+          <div className="size-control">
+            <label htmlFor="rows-input">Rows:</label>
+            <input
+              id="rows-input"
+              type="number"
+              min="5"
+              max="50"
+              value={this.state.rowsInput}
+              onChange={this.handleRowsChange}
+              onBlur={this.handleRowsBlur}
+              disabled={this.state.buttonDisabled}
+            />
+          </div>
+          <div className="size-control">
+            <label htmlFor="cols-input">Columns:</label>
+            <input
+              id="cols-input"
+              type="number"
+              min="10"
+              max="100"
+              value={this.state.colsInput}
+              onChange={this.handleColsChange}
+              onBlur={this.handleColsBlur}
+              disabled={this.state.buttonDisabled}
+            />
+          </div>
+        </div>
         <div id="algo-description-container">
           <div id="algo-description">
             {this.getAlgorithmDescription(selectedAlgorithm)}
@@ -597,24 +806,30 @@ export default class PathfindingVisualizer extends Component {
         </div>
         <div id="timer-container">
           <div id="algorithm-timer">
-              <strong>Algorithm Time: </strong>
-              <p class="timer">
+            <strong>Algorithm Time: </strong>
+            <p class="timer">
               {this.state.algorithmTimer
-              ? `${this.state.algorithmTimer} ms`
+                ? `${this.state.algorithmTimer} ms`
                 : "Not started"}
-              </p>
-            </div>
-            <div id="animation-timer">
-              <strong>Animation Time: </strong>
-              <p class="timer">
-                {this.state.animationTimer
+            </p>
+          </div>
+          <div id="animation-timer">
+            <strong>Animation Time: </strong>
+            <p class="timer">
+              {this.state.animationTimer
                 ? `${this.state.animationTimer / 1000} s`
                 : "Not started"}
-              </p>
-            </div>
+            </p>
+          </div>
         </div>
         <div id="grid-container">
-          <div className="grid">
+          <div
+            className="grid"
+            style={{
+              width: `${cols * 25 + 40}px`,
+              height: `${rows * 25 + 40}px`,
+            }}
+          >
             {grid.map((row, rowIdx) => {
               return (
                 <div key={rowIdx}>
@@ -638,16 +853,12 @@ export default class PathfindingVisualizer extends Component {
                         isStart={isStart}
                         isWall={isWall}
                         mouseIsPressed={mouseIsPressed}
-                        onMouseDown={(row, col) => {
-                          if (!isStart && !isFinish) {
-                            this.handleMouseDown(row, col);
-                          }
-                        }}
-                        onMouseEnter={(row, col) => {
-                          if (!isStart && !isFinish) {
-                            this.handleMouseEnter(row, col);
-                          }
-                        }}
+                        onMouseDown={(row, col) =>
+                          this.handleMouseDown(row, col)
+                        }
+                        onMouseEnter={(row, col) =>
+                          this.handleMouseEnter(row, col)
+                        }
                         onMouseUp={() => this.handleMouseUp()}
                         row={row}
                         selectedAlgorithm={this.state.selectedAlgorithm}
@@ -659,10 +870,10 @@ export default class PathfindingVisualizer extends Component {
             })}
           </div>
         </div>
-        
+
         <div id="info-container">
           <div id="info">
-                  {this.getExtendedAlgorithmDescription(selectedAlgorithm)}
+            {this.getExtendedAlgorithmDescription(selectedAlgorithm)}
           </div>
         </div>
       </>
@@ -670,25 +881,27 @@ export default class PathfindingVisualizer extends Component {
   }
 }
 
-
-const getInitialGrid = () => {
+const getInitialGrid = (rows, cols) => {
   const grid = [];
-  for (let row = 0; row < 20; row++) {
+  const startPos = getStartNodePosition(rows, cols);
+  const finishPos = getFinishNodePosition(rows, cols);
+
+  for (let row = 0; row < rows; row++) {
     const currentRow = [];
-    for (let col = 0; col < 50; col++) {
-      currentRow.push(createNode(row, col));
+    for (let col = 0; col < cols; col++) {
+      currentRow.push(createNode(row, col, startPos, finishPos));
     }
     grid.push(currentRow);
   }
   return grid;
 };
 
-const createNode = (row, col) => {
+const createNode = (row, col, startPos, finishPos) => {
   return {
     row,
     col,
-    isStart: row === START_NODE_ROW && col === START_NODE_COL,
-    isFinish: row === FINISH_NODE_ROW && col === FINISH_NODE_COL,
+    isStart: row === startPos.row && col === startPos.col,
+    isFinish: row === finishPos.row && col === finishPos.col,
     isWall: false,
     distance: Infinity,
     isVisited: false,
@@ -701,10 +914,27 @@ const createNode = (row, col) => {
 const getNewGridWithWallToggled = (grid, row, col) => {
   const newGrid = grid.slice();
   const node = newGrid[row][col];
+  if (node.isStart || node.isFinish) return newGrid; // don't toggle endpoints
   const newNode = {
     ...node,
     isWall: !node.isWall,
   };
   newGrid[row][col] = newNode;
   return newGrid;
+};
+
+// Utility to locate current start and finish nodes each time (supports dragging updates)
+const findCurrentPositions = (grid) => {
+  let start = null;
+  let finish = null;
+  for (let r = 0; r < grid.length; r++) {
+    for (let c = 0; c < grid[r].length; c++) {
+      const n = grid[r][c];
+      if (n.isStart) start = { row: r, col: c };
+      if (n.isFinish) finish = { row: r, col: c };
+      if (start && finish) break;
+    }
+    if (start && finish) break;
+  }
+  return { start, finish };
 };
