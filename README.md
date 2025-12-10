@@ -171,4 +171,4 @@ Notes:
 
 ## 💖 Acknowledgment
 
-**Beautiful Instructor:** [Agdon, Fatima Marie P.](https://github.com/marieemoiselle)
+**Instructor:** Dominic Miko Valdez
